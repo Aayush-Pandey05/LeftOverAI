@@ -9,6 +9,7 @@ import { flushSync } from "react-dom";
 import ConversationDisplayArea from "../Display/ConversationDisplayArea.jsx";
 import Background from '../Background/Background';
 import SimpleBackground from '../Background/SimpleBackground';
+import Sidebar from "../Sidebar/Sidebar";
 
 // Error boundary component
 class ErrorBoundary extends React.Component {
@@ -38,33 +39,35 @@ const Main = () => {
   const inputRef = useRef();
   const host = "http://localhost:9000";
   const url = host + "/chat";
-  const streamUrl = host + "/stream";
   const imageUrl = host + "/image";
-  const audioUrl = host + "/audio";
   
   // State variables
   const [data, setData] = useState([]);
-  const [answer, setAnswer] = useState("");
-  const [streamdiv, showStreamdiv] = useState(false);
   const [input, setInput] = useState("");
   const [selectedImg, setSelectedImg] = useState(null);
-  const [isUpdatingProfile, setIsUpdatingProfile] = useState(false);
   const [showResult, setShowResult] = useState(false);
   const [waiting, setWaiting] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
-  const [isRecording, setIsRecording] = useState(false);
-  const mediaRecorderRef = useRef(null);
-  const audioChunksRef = useRef([]);
+  const [sidebarExtended, setSidebarExtended] = useState(false);
 
   // Context hooks
-  const { setPrevPrompts, setRecentPrompt, newChat } = useContext(Context);
+  const { setPrevPrompts, setRecentPrompt, newChat, currentChatData, setCurrentChatData } = useContext(Context);
   const { user, isAuthenticated, logout } = useContext(AuthContext);
   const navigate = useNavigate();
 
-  // Debug authentication
+  // Sync conversation data between Main component and Context
   useEffect(() => {
-    console.log("Authentication state:", { isAuthenticated, user });
-  }, [isAuthenticated, user]);
+    // If context has conversation data on initial load, use it
+    if (currentChatData.length > 0 && data.length === 0) {
+      setData(currentChatData);
+      setShowResult(true);
+    }
+    // When currentChatData changes (like when loading a previous chat), update local data
+    else if (currentChatData.length > 0) {
+      setData(currentChatData);
+      setShowResult(true);
+    }
+  }, [currentChatData, setData]);
 
   // Allow guest mode
   useEffect(() => {
@@ -81,11 +84,11 @@ const Main = () => {
     newChat();
   };
 
-  // Scroll to checkpoint
+  // Scroll to bottom of conversation display area, not the whole page
   function executeScroll() {
-    const element = document.getElementById("checkpoint");
-    if (element) {
-      element.scrollIntoView({ behavior: "smooth" });
+    const resultData = document.querySelector('.result-data');
+    if (resultData) {
+      resultData.scrollTop = resultData.scrollHeight;
     }
   }
 
@@ -205,6 +208,8 @@ const Main = () => {
 
       flushSync(() => {
         setData(updatedData);
+        // Update context with the new data
+        setCurrentChatData(updatedData);
         inputRef.current.placeholder = "Enter a message.";
         setWaiting(false);
       });
@@ -220,6 +225,8 @@ const Main = () => {
 
       flushSync(() => {
         setData(updatedData);
+        // Update context with the new data
+        setCurrentChatData(updatedData);
         inputRef.current.placeholder = "Enter a message.";
         setWaiting(false);
       });
@@ -301,7 +308,6 @@ const Main = () => {
     if (!file) return;
 
     try {
-      setIsUpdatingProfile(true);
       setErrorMsg("");
       const resizedImage = await resizeImage(file);
       console.log("Image selected and resized successfully");
@@ -309,8 +315,6 @@ const Main = () => {
     } catch (error) {
       console.error("Error processing image upload:", error);
       setErrorMsg("Failed to process image. Please try a different image.");
-    } finally {
-      setIsUpdatingProfile(false);
     }
   };
 
@@ -353,24 +357,21 @@ const Main = () => {
     setPrevPrompts((prev) => [...prev, "Image Upload"]);
     flushSync(() => {
       setData(processingData);
+      setCurrentChatData(ndata); // Update context with user message but not processing message
       setInput("");
       setWaiting(true);
       inputRef.current.placeholder = "Waiting for model's response";
     });
     executeScroll();
 
-    // Prepare and send image
-    let processedImage = selectedImg;
-    const imageData = {
-      image: processedImage,
-      prompt: input || "You are a chef. Provide recipe suggestions based on the uploaded image of leftover food.",
-      history: cleanupHistory(data),
-    };
-
     // Process image with retries
     const attemptImageProcessing = async (retryCount = 0) => {
       try {
-        const response = await axios.post(imageUrl, imageData, {
+        const response = await axios.post(imageUrl, {
+          image: selectedImg,
+          prompt: input || "You are a chef. Provide recipe suggestions based on the uploaded image of leftover food.",
+          history: cleanupHistory(data),
+        }, {
           headers: { "Content-Type": "application/json" },
           timeout: 90000,
         });
@@ -384,6 +385,7 @@ const Main = () => {
 
         flushSync(() => {
           setData(finalData);
+          setCurrentChatData(finalData); // Update context with final data
           setWaiting(false);
           inputRef.current.placeholder = "Enter a message.";
         });
@@ -414,7 +416,13 @@ const Main = () => {
 
         // Handle error
         let errorMessage = "Error processing image: ";
-        if (error.response) {
+        
+        // Check for quota/rate limit errors
+        if (error.response?.data?.text && error.response.data.text.includes("quota")) {
+          errorMessage = "The AI service has reached its request limit. Please try again later or use text queries instead.";
+        } else if (error.response?.data?.text && error.response.data.text.includes("429 Too Many Requests")) {
+          errorMessage = "The AI service is currently busy. Please wait a few minutes before trying again.";
+        } else if (error.response) {
           errorMessage += error.response.data?.text || `Server error: ${error.response.status}`;
         } else if (error.request) {
           errorMessage += "No response from server. Please check your connection or try with a smaller image.";
@@ -430,6 +438,7 @@ const Main = () => {
 
         flushSync(() => {
           setData(finalData);
+          setCurrentChatData(finalData); // Update context with error response
           setWaiting(false);
           inputRef.current.placeholder = "Enter a message.";
         });
@@ -456,168 +465,178 @@ const Main = () => {
 
   // Reset chat
   const handleNewChat = () => {
+    // Clear local state
     setData([]);
     setShowResult(false);
     setInput("");
     setSelectedImg(null);
     setWaiting(false);
     setErrorMsg("");
+    
+    // Call newChat in Context which will save current chat and start a new one
     newChat();
   };
 
+  // Handle sidebar extension
+  const handleSidebarExtension = (isExtended) => {
+    setSidebarExtended(isExtended);
+  }
+
   return (
-    <div className="main-container">
-      <ErrorBoundary fallback={<SimpleBackground />}>
-        <Background />
-      </ErrorBoundary>
-      
-      <div className="nav-bar">
-        <div className="nav">
-          <p>Leftover Chef AI</p>
-          <div className="user-actions">
-            {isAuthenticated ? (
-              <>
-                <span className="user-email">{user?.fullName || (user?.email ? user.email.split('@')[0] : 'User')}</span>
-                <button onClick={handleLogout} className="logout-button">Logout</button>
-              </>
-            ) : (
-              <>
-                <button onClick={() => navigate('/login')} className="login-button">Login</button>
-                <button onClick={() => navigate('/signup')} className="signup-button">Sign Up</button>
-              </>
-            )}
-          </div>
-        </div>
-      </div>
-      <div className="content">
-        {!showResult ? (
-          <div className="greet">
-            <p>
-              <span>Welcome {isAuthenticated ? `${user?.fullName || (user?.email ? user.email.split('@')[0] : '')}` : 'to Leftover Chef AI'}</span>
-              Upload a photo of your leftover food and our AI will identify ingredients and suggest delicious recipes!
-            </p>
-            <div className="feature-list">
-              <div className="feature">
-                <div className="feature-icon">📷</div>
-                <div className="feature-text">
-                  <h3>Upload Food Photos</h3>
-                  <p>Take a picture of ingredients or leftovers</p>
-                </div>
-              </div>
-              <div className="feature">
-                <div className="feature-icon">🍲</div>
-                <div className="feature-text">
-                  <h3>Get Recipe Ideas</h3>
-                  <p>Receive custom recipe suggestions</p>
-                </div>
-              </div>
-              <div className="feature">
-                <div className="feature-icon">🔍</div>
-                <div className="feature-text">
-                  <h3>Ask Questions</h3>
-                  <p>Get cooking tips and advice</p>
-                </div>
-              </div>
-            </div>
-            
-            {!isAuthenticated && (
-              <div className="auth-cta">
-                <p>Create an account to save your recipes and conversation history</p>
-                <div className="auth-buttons">
-                  <button onClick={() => navigate('/login')} className="login-cta">Login</button>
-                  <button onClick={() => navigate('/signup')} className="signup-cta">Sign Up</button>
-                </div>
-              </div>
-            )}
-          </div>
-        ) : (
-          <div className="result">
-            <div className="result-title">
-              <img src={assets.gemini_icon} alt="Gemini" />
-              <p>Recipe Assistant</p>
-              <button onClick={handleNewChat} className="new-chat-button">
-                <span>+</span> New Chat
-              </button>
-            </div>
-            <div className="result-data">
-              <ConversationDisplayArea data={data} streamdiv={streamdiv} answer={answer} />
-              {waiting && (
-                <div className="loader">
-                  <hr />
-                  <hr />
-                  <hr />
-                  <hr />
-                </div>
+    <div className="main">
+      <Sidebar onExtendChange={handleSidebarExtension} />
+      <div className={`main-container ${sidebarExtended ? 'sidebar-extended' : ''}`}>
+        <ErrorBoundary fallback={<SimpleBackground />}>
+          <Background />
+        </ErrorBoundary>
+        <div className="nav-bar">
+          <div className="nav">
+            <p>Leftover Chef AI</p>
+            <div className="user-actions">
+              {isAuthenticated ? (
+                <>
+                  <span className="user-email">{user?.fullName || (user?.email ? user.email.split('@')[0] : 'User')}</span>
+                  <button onClick={handleLogout} className="logout-button">Logout</button>
+                </>
+              ) : (
+                <>
+                  <button onClick={() => navigate('/login')} className="login-button">Login</button>
+                  <button onClick={() => navigate('/signup')} className="signup-button">Sign Up</button>
+                </>
               )}
             </div>
           </div>
-        )}
-
-        <div className="main-bottom">
-          <div className="search-box">
-            <input
-              ref={inputRef}
-              onChange={(e) => setInput(e.target.value)}
-              value={input}
-              type="text"
-              placeholder={
-                waiting
-                  ? "Generating recipe suggestions..."
-                  : "Ask about recipes or upload a food image..."
-              }
-              disabled={waiting}
-              onKeyPress={(e) => e.key === 'Enter' && !waiting && (input.trim() || selectedImg) && (selectedImg ? handleImageProcessing() : handleClick())}
-            />
-            <div>
-              <label htmlFor="image-upload" className={waiting ? "disabled" : ""}>
-                <img
-                  src={assets.gallery_icon}
-                  alt="Upload Food Image"
-                  title="Upload Food Image"
-                  className="tool-icon"
-                />
-              </label>
-              <input
-                id="image-upload"
-                type="file"
-                accept="image/*"
-                onChange={handleImageUpload}
-                style={{ display: "none" }}
-                disabled={waiting}
-              />
-
-              <div className="send-button-container">
-                <button
-                  className={`send-button ${(Boolean(input.trim()) || Boolean(selectedImg)) && !waiting ? 'active' : 'disabled'}`}
-                  onClick={() => {
-                    if (waiting) return;
-                    if (selectedImg) {
-                      handleImageProcessing();
-                    } else if (input.trim()) {
-                      handleClick();
-                    }
-                  }}
-                  disabled={waiting || (!input.trim() && !selectedImg)}
-                  title={selectedImg ? "Process Image" : "Send Message"}
-                >
-                  <img src={assets.send_icon} alt="Send" />
+        </div>
+        <div className="content">
+          {!showResult ? (
+            <div className="greet">
+              <p>
+                <span>Welcome {isAuthenticated ? `${user?.fullName || (user?.email ? user.email.split('@')[0] : '')}` : 'to Leftover Chef AI'}</span>
+                Upload a photo of your leftover food and our AI will identify ingredients and suggest delicious recipes!
+              </p>
+              <div className="feature-list">
+                <div className="feature">
+                  <div className="feature-icon">📷</div>
+                  <div className="feature-text">
+                    <h3>Upload Food Photos</h3>
+                    <p>Take a picture of ingredients or leftovers</p>
+                  </div>
+                </div>
+                <div className="feature">
+                  <div className="feature-icon">🍲</div>
+                  <div className="feature-text">
+                    <h3>Get Recipe Ideas</h3>
+                    <p>Receive custom recipe suggestions</p>
+                  </div>
+                </div>
+                <div className="feature">
+                  <div className="feature-icon">🔍</div>
+                  <div className="feature-text">
+                    <h3>Ask Questions</h3>
+                    <p>Get cooking tips and advice</p>
+                  </div>
+                </div>
+              </div>
+              
+              {!isAuthenticated && (
+                <div className="auth-cta">
+                  <p>Create an account to save your recipes and conversation history</p>
+                  <div className="auth-buttons">
+                    <button onClick={() => navigate('/login')} className="login-cta">Login</button>
+                    <button onClick={() => navigate('/signup')} className="signup-cta">Sign Up</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="result">
+              <div className="result-title">
+                <img src={assets.gemini_icon} alt="Gemini" />
+                <p>Recipe Assistant</p>
+                <button onClick={handleNewChat} className="new-chat-button">
+                  <span>+</span> New Chat
                 </button>
               </div>
-            </div>
-          </div>
-          {selectedImg && (
-            <div className="image-preview">
-              <img src={selectedImg} alt="Selected" className="selected-img-preview" />
-              <button 
-                className="remove-image-btn"
-                onClick={() => setSelectedImg(null)}
-                title="Remove image"
-              >×</button>
+              <div className="result-data">
+                <ConversationDisplayArea data={data} />
+                {waiting && (
+                  <div className="loader">
+                    <hr />
+                    <hr />
+                    <hr />
+                    <hr />
+                  </div>
+                )}
+              </div>
             </div>
           )}
-          <p className="bottom-info">
-            Leftover Chef AI identifies ingredients in your images and suggests creative recipes. For best results, use clear photos.
-          </p>
+
+          <div className="main-bottom">
+            <div className="search-box">
+              <input
+                ref={inputRef}
+                onChange={(e) => setInput(e.target.value)}
+                value={input}
+                type="text"
+                placeholder={
+                  waiting
+                    ? "Generating recipe suggestions..."
+                    : "Ask about recipes or upload a food image..."
+                }
+                disabled={waiting}
+                onKeyPress={(e) => e.key === 'Enter' && !waiting && (input.trim() || selectedImg) && (selectedImg ? handleImageProcessing() : handleClick())}
+              />
+              <div>
+                <label htmlFor="image-upload" className={waiting ? "disabled" : ""}>
+                  <img
+                    src={assets.gallery_icon}
+                    alt="Upload Food Image"
+                    title="Upload Food Image"
+                    className="tool-icon"
+                  />
+                </label>
+                <input
+                  id="image-upload"
+                  type="file"
+                  accept="image/*"
+                  onChange={handleImageUpload}
+                  style={{ display: "none" }}
+                  disabled={waiting}
+                />
+
+                <div className="send-button-container">
+                  <button
+                    className={`send-button ${(Boolean(input.trim()) || Boolean(selectedImg)) && !waiting ? 'active' : 'disabled'}`}
+                    onClick={() => {
+                      if (waiting) return;
+                      if (selectedImg) {
+                        handleImageProcessing();
+                      } else if (input.trim()) {
+                        handleClick();
+                      }
+                    }}
+                    disabled={waiting || (!input.trim() && !selectedImg)}
+                    title={selectedImg ? "Process Image" : "Send Message"}
+                  >
+                    <img src={assets.send_icon} alt="Send" />
+                  </button>
+                </div>
+              </div>
+            </div>
+            {selectedImg && (
+              <div className="image-preview">
+                <img src={selectedImg} alt="Selected" className="selected-img-preview" />
+                <button 
+                  className="remove-image-btn"
+                  onClick={() => setSelectedImg(null)}
+                  title="Remove image"
+                >×</button>
+              </div>
+            )}
+            <p className="bottom-info">
+              Leftover Chef AI identifies ingredients in your images and suggests creative recipes. For best results, use clear photos.
+            </p>
+          </div>
         </div>
       </div>
     </div>

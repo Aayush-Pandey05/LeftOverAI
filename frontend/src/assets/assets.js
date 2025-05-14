@@ -30,4 +30,5 @@ export const assets = {
   code_icon,
   send_icon,
   gemini_icon,
+  chat_icon: message_icon,
 };

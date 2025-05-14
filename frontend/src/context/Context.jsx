@@ -30,7 +30,14 @@ const ContextProvider = (props) => {
         if (chatHistory.length > 0) {
             localStorage.setItem('chatHistory', JSON.stringify(chatHistory));
         }
-    }, [chatHistory]);
+    }, []);
+
+    // Auto-save current chat whenever it changes
+    useEffect(() => {
+        if (currentChatData.length > 0) {
+            autoSaveCurrentChat();
+        }
+    }, [currentChatData]);
 
     const delayPara = (index, nextWord) => {
         setTimeout(() => {
@@ -40,7 +47,7 @@ const ContextProvider = (props) => {
 
     const newChat = () => {
         // Save current chat before creating a new one
-        saveCurrentChat();
+        saveCurrentChat(true); // true means this is a new chat creation
         
         // Start a new chat
         setCurrentChatId(Date.now().toString());
@@ -51,10 +58,12 @@ const ContextProvider = (props) => {
         setRecentPrompt("");
     };
     
-    const saveCurrentChat = () => {
+    // Auto-save current chat without creating a new entry
+    const autoSaveCurrentChat = () => {
         if (currentChatData.length > 0) {
-            // Find a meaningful title for the chat
-            const chatTitle = currentChatData.find(msg => msg.role === 'user')?.parts[0]?.text || "New Chat";
+            // Find a meaningful title for the chat - use the first user message
+            const firstUserMessage = currentChatData.find(msg => msg.role === 'user');
+            const chatTitle = firstUserMessage?.parts[0]?.text || "New Chat";
             
             // Check if this chat already exists in history
             const existingChatIndex = chatHistory.findIndex(chat => chat.id === currentChatId);
@@ -65,7 +74,8 @@ const ContextProvider = (props) => {
                 updatedHistory[existingChatIndex] = {
                     id: currentChatId,
                     title: chatTitle,
-                    data: currentChatData
+                    data: currentChatData,
+                    lastUpdated: Date.now()
                 };
                 setChatHistory(updatedHistory);
             } else {
@@ -75,24 +85,79 @@ const ContextProvider = (props) => {
                     {
                         id: currentChatId,
                         title: chatTitle,
-                        data: currentChatData
+                        data: currentChatData,
+                        lastUpdated: Date.now()
                     }
                 ]);
             }
         }
     };
     
-    const loadChat = (index) => {
+    // Save current chat and optionally mark it as completed
+    const saveCurrentChat = (isNewChat = false) => {
+        if (currentChatData.length > 0) {
+            // Find a meaningful title for the chat
+            const firstUserMessage = currentChatData.find(msg => msg.role === 'user');
+            const chatTitle = firstUserMessage?.parts[0]?.text || "New Chat";
+            
+            // Check if this chat already exists in history
+            const existingChatIndex = chatHistory.findIndex(chat => chat.id === currentChatId);
+            
+            if (existingChatIndex !== -1) {
+                // Update existing chat
+                const updatedHistory = [...chatHistory];
+                updatedHistory[existingChatIndex] = {
+                    id: currentChatId,
+                    title: chatTitle,
+                    data: currentChatData,
+                    lastUpdated: Date.now(),
+                    completed: isNewChat // Mark as completed if a new chat is being created
+                };
+                setChatHistory(updatedHistory);
+            } else {
+                // Add new chat to history
+                setChatHistory(prev => [
+                    ...prev,
+                    {
+                        id: currentChatId,
+                        title: chatTitle,
+                        data: currentChatData,
+                        lastUpdated: Date.now(),
+                        completed: isNewChat // Mark as completed if a new chat is being created
+                    }
+                ]);
+            }
+        }
+    };
+    
+    const loadChat = (chatId) => {
         // Save current chat before switching
         saveCurrentChat();
         
-        // Load selected chat
-        const selectedChat = chatHistory[index];
+        // Find the chat by ID
+        const selectedChat = chatHistory.find(chat => chat.id === chatId);
         if (selectedChat) {
             setCurrentChatId(selectedChat.id);
             setCurrentChatData(selectedChat.data);
             setShowResult(selectedChat.data.length > 0);
-            setRecentPrompt(selectedChat.title);
+            
+            // Set the recent prompt to the first message in the chat
+            const firstUserMessage = selectedChat.data.find(msg => msg.role === 'user');
+            setRecentPrompt(firstUserMessage?.parts[0]?.text || "Chat");
+            
+            // If this was a completed chat, mark it as active again
+            if (selectedChat.completed) {
+                const updatedHistory = [...chatHistory];
+                const chatIndex = updatedHistory.findIndex(chat => chat.id === chatId);
+                if (chatIndex !== -1) {
+                    updatedHistory[chatIndex] = {
+                        ...updatedHistory[chatIndex],
+                        completed: false,
+                        lastUpdated: Date.now()
+                    };
+                    setChatHistory(updatedHistory);
+                }
+            }
         }
     };
 
@@ -102,42 +167,58 @@ const ContextProvider = (props) => {
         setShowResult(true);
         
         let response;
-        if (prompt !== undefined) {
-            response = await run(prompt);
-            setRecentPrompt(prompt);
-            setPrevPrompts((prev) => [...prev, prompt]);
+        try {
+            if (prompt !== undefined) {
+                response = await run(prompt);
+                setRecentPrompt(prompt);
+                setPrevPrompts((prev) => [...prev, prompt]);
+                
+                // Add user message to current chat data
+                const userMessage = { role: "user", parts: [{ text: prompt }] };
+                setCurrentChatData(prev => [...prev, userMessage]);
+            } else {
+                setPrevPrompts((prev) => [...prev, input]);
+                setRecentPrompt(input);
+                response = await run(input);
+                
+                // Add user message to current chat data
+                const userMessage = { role: "user", parts: [{ text: input }] };
+                setCurrentChatData(prev => [...prev, userMessage]);
+            }
+
+            // Process and display the response
+            let responseArray = response.split("**");
+            let newResponse = responseArray.map((item, i) =>
+                i % 2 !== 1 ? item : `<b>${item}</b>`
+            ).join("");
+
+            let newResponse2 = newResponse.split("*").join("</br>");
+            let newResponseArray = newResponse2.split(" ");
+
+            // Add model response to current chat data immediately
+            const modelMessage = { role: "model", parts: [{ text: response }] };
+            setCurrentChatData(prev => [...prev, modelMessage]);
             
-            // Add user message to current chat data
-            const userMessage = { role: "user", parts: [{ text: prompt }] };
-            setCurrentChatData(prev => [...prev, userMessage]);
-        } else {
-            setPrevPrompts((prev) => [...prev, input]);
-            setRecentPrompt(input);
-            response = await run(input);
+            // Animating text display
+            newResponseArray.forEach((word, i) => {
+                delayPara(i, word + " ");
+            });
+
+            setLoading(false);
+            setInput("");
+        } catch (error) {
+            console.error("Error in onSent:", error);
             
-            // Add user message to current chat data
-            const userMessage = { role: "user", parts: [{ text: input }] };
-            setCurrentChatData(prev => [...prev, userMessage]);
+            // Add error message to chat data
+            const errorMessage = { 
+                role: "model", 
+                parts: [{ text: "Sorry, there was an error processing your request." }] 
+            };
+            setCurrentChatData(prev => [...prev, errorMessage]);
+            
+            setLoading(false);
+            setInput("");
         }
-
-        let responseArray = response.split("**");
-        let newResponse = responseArray.map((item, i) =>
-            i % 2 !== 1 ? item : `<b>${item}</b>`
-        ).join("");
-
-        let newResponse2 = newResponse.split("*").join("</br>");
-        let newResponseArray = newResponse2.split(" ");
-
-        newResponseArray.forEach((word, i) => {
-            delayPara(i, word + " ");
-        });
-        
-        // Add model response to current chat data
-        const modelMessage = { role: "model", parts: [{ text: response }] };
-        setCurrentChatData(prev => [...prev, modelMessage]);
-
-        setLoading(false);
-        setInput("");
     };
 
     const onImgUpload = async (imageURL, clearImage) => {
@@ -209,7 +290,10 @@ const ContextProvider = (props) => {
         onImgUpload,
         chatHistory,
         loadChat,
-        currentChatData
+        currentChatData,
+        setCurrentChatData,
+        currentChatId,
+        saveCurrentChat
     };
 
     return (

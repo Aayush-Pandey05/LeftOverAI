@@ -5,8 +5,8 @@
     min-height: 100vh;
     padding-bottom: 15vh;
     position: relative;
-    background-color: #121212;
-    color:#ffffff ;
+    background-color: #f9fafb;
+    color: #1f2937;
     z-index: 10;
 }
 
@@ -15,7 +15,7 @@
     justify-content: space-between;
     align-items: center;
     padding: 20px;
-    background-color: #1e1e1e;
+    background-color: white;
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
     position: relative;
     z-index: 2;
@@ -35,13 +35,37 @@
 }
 
 .main-container {
-    width: 100%;
+    width: calc(100% - 85px);
     height: 100vh;
     position: relative;
     display: flex;
     flex-direction: column;
     background-color: #f9fafb;
     overflow: hidden;
+    margin-left: 85px;
+    transition: margin-left 0.3s ease, width 0.3s ease;
+}
+
+.main-container.sidebar-extended {
+    width: calc(100% - 250px);
+    margin-left: 250px;
+}
+
+/* Position the background properly */
+.main-container .error-boundary, 
+.main-container > div:first-of-type {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 0;
+}
+
+/* Content areas should be above background */
+.nav-bar, .content, .main-bottom {
+    position: relative;
+    z-index: 1;
 }
 
 .nav-bar {
@@ -151,6 +175,22 @@
     flex: 1;
     padding: 0;
     overflow-y: auto;
+    max-height: calc(100vh - 200px); /* Adjust based on your header/footer heights */
+    scrollbar-width: thin;
+    scrollbar-color: rgba(99, 102, 241, 0.5) transparent;
+}
+
+.result-data::-webkit-scrollbar {
+    width: 8px;
+}
+
+.result-data::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.result-data::-webkit-scrollbar-thumb {
+    background-color: rgba(99, 102, 241, 0.5);
+    border-radius: 20px;
 }
 
 .chat-area {
@@ -446,6 +486,9 @@
 .signup-button {
   background-color: #6366f1;
   color: white;
+  width: 10rem;
+  height: 2.75rem;
+  margin-top: 1.1rem;
 }
 
 .signup-button:hover {

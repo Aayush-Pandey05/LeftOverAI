@@ -66,7 +66,7 @@ const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
 
 // Initialize models
 const textModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-const multimodalModel = genAI.getGenerativeModel({ model: "gemini-1.5-pro" });
+const multimodalModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
 // Normal chat endpoint
 app.post("/chat", async (req, res) => {

@@ -1,3 +1,3 @@
 // config.js
 
-export const apiKey = "AIzaSyDkkuO_IQdNc3kW_zC9ZB9_wotHv7lUWTg";
+export const apiKey = "AIzaSyBG9Lti8SvwZG5Ty-fxzPvDnNTfTVuYx-M";

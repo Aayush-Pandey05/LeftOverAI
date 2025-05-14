@@ -10,7 +10,7 @@ function getApiKey() {
 const genAI = new GoogleGenerativeAI(getApiKey());
 
 async function imageInput(base64Image) {
-  const model = genAI.getGenerativeModel({ model: "gemini-1.5-pro" });
+  const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
   const prompt = "You are a doctor. Provide a diagnosis based on the uploaded image.";
 
   // Gemini API expects images in this format
